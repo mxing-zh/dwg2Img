@@ -17,7 +17,6 @@ def detect_oda_converter() -> Path | None:
     """Try to auto-detect ODA File Converter executable path."""
     candidates: list[Path] = []
 
-    # PATH search first
     for cmd in ("ODAFileConverter", "ODAFileConverter.exe"):
         found = shutil.which(cmd)
         if found:
@@ -57,15 +56,17 @@ class App(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("DWG 批量转图片工具")
-        self.geometry("900x650")
+        self.geometry("920x700")
 
         self.input_var = tk.StringVar()
         self.output_var = tk.StringVar()
         self.single_dir_var = tk.StringVar()
         self.oda_var = tk.StringVar()
         self.format_var = tk.StringVar(value="png")
-        self.dpi_var = tk.StringVar(value="300")
+        self.dpi_var = tk.StringVar(value="96")
         self.mode_var = tk.StringVar(value="mirror")
+        self.layout_mode_var = tk.StringVar(value="auto")
+        self.layout_name_var = tk.StringVar()
 
         self._build_ui()
         self._init_oda_path()
@@ -103,15 +104,27 @@ class App(tk.Tk):
         self.single_btn = ttk.Button(mode_frame, text="选择", command=self._choose_single)
         self.single_btn.grid(row=1, column=2, sticky="e")
 
-        option_frame = ttk.Frame(frm)
+        option_frame = ttk.LabelFrame(frm, text="渲染选项", padding=10)
         option_frame.grid(row=4, column=0, columnspan=3, sticky="ew")
         option_frame.columnconfigure(1, weight=1)
         option_frame.columnconfigure(3, weight=1)
 
         ttk.Label(option_frame, text="格式").grid(row=0, column=0, sticky="w")
         ttk.Combobox(option_frame, textvariable=self.format_var, values=["png", "jpg"], width=8, state="readonly").grid(row=0, column=1, sticky="w", padx=6)
-        ttk.Label(option_frame, text="DPI").grid(row=0, column=2, sticky="e")
+        ttk.Label(option_frame, text="DPI(默认96)").grid(row=0, column=2, sticky="e")
         ttk.Entry(option_frame, textvariable=self.dpi_var, width=10).grid(row=0, column=3, sticky="w", padx=6)
+
+        ttk.Label(option_frame, text="布局模式").grid(row=1, column=0, sticky="w", pady=(8, 0))
+        ttk.Combobox(
+            option_frame,
+            textvariable=self.layout_mode_var,
+            values=["auto", "model", "layout"],
+            width=12,
+            state="readonly",
+        ).grid(row=1, column=1, sticky="w", padx=6, pady=(8, 0))
+
+        ttk.Label(option_frame, text="指定布局名(可选)").grid(row=1, column=2, sticky="e", pady=(8, 0))
+        ttk.Entry(option_frame, textvariable=self.layout_name_var, width=18).grid(row=1, column=3, sticky="w", padx=6, pady=(8, 0))
 
         self.start_btn = ttk.Button(frm, text="开始批量转换", command=self._start)
         self.start_btn.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(10, 8))
@@ -175,6 +188,10 @@ class App(tk.Tk):
             messagebox.showerror("参数错误", "DPI 必须是整数")
             return
 
+        if dpi <= 0:
+            messagebox.showerror("参数错误", "DPI 必须大于 0")
+            return
+
         mode = self.mode_var.get()
         single_dir = Path(self.single_dir_var.get()) if mode == "single" and self.single_dir_var.get().strip() else None
 
@@ -186,6 +203,8 @@ class App(tk.Tk):
             single_output_dir=single_dir,
             mirror_structure=(mode == "mirror"),
             oda_converter=Path(self.oda_var.get().strip()) if self.oda_var.get().strip() else None,
+            layout_mode=self.layout_mode_var.get(),
+            preferred_layout=self.layout_name_var.get().strip() or None,
         )
 
         if not cfg.input_root.exists() or not cfg.output_root.exists():
