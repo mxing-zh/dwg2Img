@@ -8,7 +8,7 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from converter import ConvertConfig, batch_convert
+from converter import ConvertConfig, auto_workers, batch_convert
 
 ODA_DOWNLOAD_URL = "https://www.opendesign.com/guestfiles/oda_file_converter"
 
@@ -67,6 +67,9 @@ class App(tk.Tk):
         self.layout_mode_var = tk.StringVar(value="auto")
         self.layout_name_var = tk.StringVar()
         self.color_mode_var = tk.StringVar(value="bw")
+        self.max_workers_var = tk.StringVar(value="0")
+        self.oda_workers_var = tk.StringVar(value="0")
+        self.batch_size_var = tk.StringVar(value="200")
 
         self._build_ui()
         self._init_oda_path()
@@ -119,14 +122,28 @@ class App(tk.Tk):
         ).grid(row=2, column=1, sticky="w", padx=6, pady=(8, 0))
         ttk.Label(option_frame, text="bw=黑白, original=保留原色").grid(row=2, column=2, columnspan=2, sticky="w", pady=(8, 0))
 
+        ttk.Label(option_frame, text=f"渲染并发(0=自动, 建议{auto_workers()})").grid(row=3, column=0, sticky="w", pady=(8, 0))
+        ttk.Entry(option_frame, textvariable=self.max_workers_var, width=10).grid(row=3, column=1, sticky="w", padx=6, pady=(8, 0))
+        ttk.Label(option_frame, text="ODA并发(0=自动)").grid(row=3, column=2, sticky="e", pady=(8, 0))
+        ttk.Entry(option_frame, textvariable=self.oda_workers_var, width=10).grid(row=3, column=3, sticky="w", padx=6, pady=(8, 0))
+
+        ttk.Label(option_frame, text="ODA批大小").grid(row=4, column=0, sticky="w", pady=(8, 0))
+        ttk.Entry(option_frame, textvariable=self.batch_size_var, width=10).grid(row=4, column=1, sticky="w", padx=6, pady=(8, 0))
+
+        self.progress_var = tk.DoubleVar(value=0.0)
+        self.progress_bar = ttk.Progressbar(frm, variable=self.progress_var, maximum=100)
+        self.progress_bar.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(10, 4))
+        self.progress_label = ttk.Label(frm, text="进度: 0%")
+        self.progress_label.grid(row=6, column=0, columnspan=3, sticky="w")
+
         self.start_btn = ttk.Button(frm, text="开始批量转换", command=self._start)
-        self.start_btn.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(10, 8))
+        self.start_btn.grid(row=7, column=0, columnspan=3, sticky="ew", pady=(6, 8))
 
         self.log_text = tk.Text(frm, height=20)
-        self.log_text.grid(row=6, column=0, columnspan=3, sticky="nsew")
+        self.log_text.grid(row=8, column=0, columnspan=3, sticky="nsew")
 
         frm.columnconfigure(1, weight=1)
-        frm.rowconfigure(6, weight=1)
+        frm.rowconfigure(8, weight=1)
 
     def _init_oda_path(self) -> None:
         detected = detect_oda_converter()
@@ -162,15 +179,35 @@ class App(tk.Tk):
         self.log_text.see(tk.END)
         self.update_idletasks()
 
+    def _update_progress(self, message: str) -> None:
+        if not message.startswith("进度:"):
+            return
+        try:
+            ratio_text = message.rsplit("(", 1)[1].rstrip(")")
+            ratio = float(ratio_text.strip("%"))
+            self.progress_var.set(ratio)
+            self.progress_label.configure(text=f"进度: {ratio:.1f}%")
+        except Exception:
+            return
+
     def _start(self) -> None:
         try:
             dpi = int(self.dpi_var.get())
+            max_workers = int(self.max_workers_var.get())
+            oda_workers = int(self.oda_workers_var.get())
+            batch_size = int(self.batch_size_var.get())
         except ValueError:
-            messagebox.showerror("参数错误", "DPI 必须是整数")
+            messagebox.showerror("参数错误", "DPI/并发/批大小 必须是整数")
             return
 
         if dpi <= 0:
             messagebox.showerror("参数错误", "DPI 必须大于 0")
+            return
+        if max_workers < 0 or oda_workers < 0:
+            messagebox.showerror("参数错误", "并发数不能小于 0")
+            return
+        if batch_size <= 0:
+            messagebox.showerror("参数错误", "批大小必须大于 0")
             return
 
         cfg = ConvertConfig(
@@ -183,6 +220,9 @@ class App(tk.Tk):
             layout_mode=self.layout_mode_var.get(),
             preferred_layout=self.layout_name_var.get().strip() or None,
             color_mode=self.color_mode_var.get(),
+            max_workers=max_workers,
+            oda_workers=oda_workers,
+            oda_batch_size=batch_size,
         )
 
         if not cfg.input_root.exists() or not cfg.output_root.exists():
@@ -224,11 +264,14 @@ class App(tk.Tk):
 
         self.start_btn.configure(state="disabled")
         self.log_text.delete("1.0", tk.END)
+        self.progress_var.set(0.0)
+        self.progress_label.configure(text="进度: 0%")
 
         def worker() -> None:
             try:
                 for msg in batch_convert(cfg):
                     self.after(0, self._append_log, msg)
+                    self.after(0, self._update_progress, msg)
                 self.after(0, lambda: messagebox.showinfo("完成", "转换任务完成"))
             except Exception as exc:
                 self.after(0, lambda: messagebox.showerror("转换失败", str(exc)))
