@@ -8,9 +8,19 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from converter import ConvertConfig, batch_convert
+from converter import ConvertConfig, auto_workers, batch_convert
 
 ODA_DOWNLOAD_URL = "https://www.opendesign.com/guestfiles/oda_file_converter"
+
+LAYOUT_MODE_LABELS = {
+    "自动（优先布局，回退模型）": "auto",
+    "模型空间": "model",
+    "指定布局（按下方布局名）": "layout",
+}
+COLOR_MODE_LABELS = {
+    "黑白": "bw",
+    "保留原色": "original",
+}
 
 
 def detect_oda_converter() -> Path | None:
@@ -64,9 +74,10 @@ class App(tk.Tk):
         self.format_var = tk.StringVar(value="png")
         self.dpi_var = tk.StringVar(value="96")
         self.mirror_var = tk.BooleanVar(value=True)
-        self.layout_mode_var = tk.StringVar(value="auto")
+        self.layout_mode_var = tk.StringVar(value="自动（优先布局，回退模型）")
         self.layout_name_var = tk.StringVar()
-        self.color_mode_var = tk.StringVar(value="bw")
+        self.color_mode_var = tk.StringVar(value="黑白")
+        self.max_workers_var = tk.StringVar(value=str(auto_workers()))
 
         self._build_ui()
         self._init_oda_path()
@@ -81,11 +92,7 @@ class App(tk.Tk):
 
         mode_frame = ttk.LabelFrame(frm, text="输出模式", padding=10)
         mode_frame.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(8, 8))
-        ttk.Checkbutton(
-            mode_frame,
-            text="保留原目录结构",
-            variable=self.mirror_var,
-        ).grid(row=0, column=0, sticky="w")
+        ttk.Checkbutton(mode_frame, text="保留原目录结构", variable=self.mirror_var).grid(row=0, column=0, sticky="w")
 
         option_frame = ttk.LabelFrame(frm, text="渲染选项", padding=10)
         option_frame.grid(row=4, column=0, columnspan=3, sticky="ew")
@@ -101,32 +108,41 @@ class App(tk.Tk):
         ttk.Combobox(
             option_frame,
             textvariable=self.layout_mode_var,
-            values=["auto", "model", "layout"],
-            width=12,
+            values=list(LAYOUT_MODE_LABELS.keys()),
+            width=24,
             state="readonly",
         ).grid(row=1, column=1, sticky="w", padx=6, pady=(8, 0))
 
         ttk.Label(option_frame, text="指定布局名(可选)").grid(row=1, column=2, sticky="e", pady=(8, 0))
         ttk.Entry(option_frame, textvariable=self.layout_name_var, width=18).grid(row=1, column=3, sticky="w", padx=6, pady=(8, 0))
+        ttk.Label(option_frame, text="注：指定布局模式时才会优先使用布局名").grid(row=2, column=0, columnspan=2, sticky="w", pady=(4, 0))
 
-        ttk.Label(option_frame, text="颜色模式").grid(row=2, column=0, sticky="w", pady=(8, 0))
+        ttk.Label(option_frame, text="颜色模式").grid(row=3, column=0, sticky="w", pady=(8, 0))
         ttk.Combobox(
             option_frame,
             textvariable=self.color_mode_var,
-            values=["bw", "original"],
+            values=list(COLOR_MODE_LABELS.keys()),
             width=12,
             state="readonly",
-        ).grid(row=2, column=1, sticky="w", padx=6, pady=(8, 0))
-        ttk.Label(option_frame, text="bw=黑白, original=保留原色").grid(row=2, column=2, columnspan=2, sticky="w", pady=(8, 0))
+        ).grid(row=3, column=1, sticky="w", padx=6, pady=(8, 0))
+
+        ttk.Label(option_frame, text=f"渲染并发(建议值已填: {auto_workers()})").grid(row=3, column=2, sticky="e", pady=(8, 0))
+        ttk.Entry(option_frame, textvariable=self.max_workers_var, width=10).grid(row=3, column=3, sticky="w", padx=6, pady=(8, 0))
+
+        self.progress_var = tk.DoubleVar(value=0.0)
+        self.progress_bar = ttk.Progressbar(frm, variable=self.progress_var, maximum=100)
+        self.progress_bar.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(10, 4))
+        self.progress_label = ttk.Label(frm, text="进度: 0%")
+        self.progress_label.grid(row=6, column=0, columnspan=3, sticky="w")
 
         self.start_btn = ttk.Button(frm, text="开始批量转换", command=self._start)
-        self.start_btn.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(10, 8))
+        self.start_btn.grid(row=7, column=0, columnspan=3, sticky="ew", pady=(6, 8))
 
         self.log_text = tk.Text(frm, height=20)
-        self.log_text.grid(row=6, column=0, columnspan=3, sticky="nsew")
+        self.log_text.grid(row=8, column=0, columnspan=3, sticky="nsew")
 
         frm.columnconfigure(1, weight=1)
-        frm.rowconfigure(6, weight=1)
+        frm.rowconfigure(8, weight=1)
 
     def _init_oda_path(self) -> None:
         detected = detect_oda_converter()
@@ -162,15 +178,30 @@ class App(tk.Tk):
         self.log_text.see(tk.END)
         self.update_idletasks()
 
+    def _update_progress(self, message: str) -> None:
+        if not message.startswith("进度:"):
+            return
+        try:
+            ratio_text = message.rsplit("(", 1)[1].rstrip(")")
+            ratio = float(ratio_text.strip("%"))
+            self.progress_var.set(ratio)
+            self.progress_label.configure(text=f"进度: {ratio:.1f}%")
+        except Exception:
+            return
+
     def _start(self) -> None:
         try:
             dpi = int(self.dpi_var.get())
+            max_workers = int(self.max_workers_var.get())
         except ValueError:
-            messagebox.showerror("参数错误", "DPI 必须是整数")
+            messagebox.showerror("参数错误", "DPI/并发 必须是整数")
             return
 
         if dpi <= 0:
             messagebox.showerror("参数错误", "DPI 必须大于 0")
+            return
+        if max_workers <= 0:
+            messagebox.showerror("参数错误", "渲染并发必须大于 0")
             return
 
         cfg = ConvertConfig(
@@ -180,36 +211,15 @@ class App(tk.Tk):
             dpi=dpi,
             mirror_structure=self.mirror_var.get(),
             oda_converter=Path(self.oda_var.get().strip()) if self.oda_var.get().strip() else None,
-            layout_mode=self.layout_mode_var.get(),
+            layout_mode=LAYOUT_MODE_LABELS[self.layout_mode_var.get()],
             preferred_layout=self.layout_name_var.get().strip() or None,
-            color_mode=self.color_mode_var.get(),
+            color_mode=COLOR_MODE_LABELS[self.color_mode_var.get()],
+            max_workers=max_workers,
         )
 
         if not cfg.input_root.exists() or not cfg.output_root.exists():
             messagebox.showerror("参数错误", "请先选择存在的输入/输出目录")
             return
-
-        same_root = cfg.input_root.resolve() == cfg.output_root.resolve()
-        if same_root:
-            if cfg.mirror_structure:
-                prompt = (
-                    "检测到输出目录与源目录相同，且已勾选“保留原目录结构”。\n\n"
-                    "这会在各个源文件所在目录直接生成同名图片（png/jpg），\n"
-                    "源文件与输出文件会混放在一起。\n\n"
-                    "建议改用全新的输出目录，以免后续管理混乱。\n"
-                    "是否仍继续转换？"
-                )
-            else:
-                prompt = (
-                    "检测到输出目录与源目录相同，且未勾选“保留原目录结构”。\n\n"
-                    "这会把所有结果输出到源根目录，可能产生重名覆盖，\n"
-                    "源文件与输出文件会混放在一起。\n\n"
-                    "建议改用全新的输出目录。\n"
-                    "是否仍继续转换？"
-                )
-
-            if not messagebox.askyesno("输出目录建议", prompt):
-                return
 
         if cfg.oda_converter is None or not cfg.oda_converter.exists():
             go_download = messagebox.askyesno(
@@ -224,11 +234,14 @@ class App(tk.Tk):
 
         self.start_btn.configure(state="disabled")
         self.log_text.delete("1.0", tk.END)
+        self.progress_var.set(0.0)
+        self.progress_label.configure(text="进度: 0%")
 
         def worker() -> None:
             try:
                 for msg in batch_convert(cfg):
                     self.after(0, self._append_log, msg)
+                    self.after(0, self._update_progress, msg)
                 self.after(0, lambda: messagebox.showinfo("完成", "转换任务完成"))
             except Exception as exc:
                 self.after(0, lambda: messagebox.showerror("转换失败", str(exc)))
