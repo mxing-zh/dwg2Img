@@ -135,6 +135,20 @@ class App(tk.Tk):
         self.progress_label = ttk.Label(frm, text="进度: 0%")
         self.progress_label.grid(row=6, column=0, columnspan=3, sticky="w")
 
+        ttk.Label(option_frame, text=f"渲染并发(0=自动, 建议{auto_workers()})").grid(row=3, column=0, sticky="w", pady=(8, 0))
+        ttk.Entry(option_frame, textvariable=self.max_workers_var, width=10).grid(row=3, column=1, sticky="w", padx=6, pady=(8, 0))
+        ttk.Label(option_frame, text="ODA并发(0=自动)").grid(row=3, column=2, sticky="e", pady=(8, 0))
+        ttk.Entry(option_frame, textvariable=self.oda_workers_var, width=10).grid(row=3, column=3, sticky="w", padx=6, pady=(8, 0))
+
+        ttk.Label(option_frame, text="ODA批大小").grid(row=4, column=0, sticky="w", pady=(8, 0))
+        ttk.Entry(option_frame, textvariable=self.batch_size_var, width=10).grid(row=4, column=1, sticky="w", padx=6, pady=(8, 0))
+
+        self.progress_var = tk.DoubleVar(value=0.0)
+        self.progress_bar = ttk.Progressbar(frm, variable=self.progress_var, maximum=100)
+        self.progress_bar.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(10, 4))
+        self.progress_label = ttk.Label(frm, text="进度: 0%")
+        self.progress_label.grid(row=6, column=0, columnspan=3, sticky="w")
+
         self.start_btn = ttk.Button(frm, text="开始批量转换", command=self._start)
         self.start_btn.grid(row=7, column=0, columnspan=3, sticky="ew", pady=(6, 8))
 

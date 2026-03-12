@@ -177,6 +177,13 @@ def _safe_bbox_size(layout) -> tuple[float, float] | None:
     ext = _safe_bbox_extents(layout)
     if ext is None:
         return None
+    return ext
+
+
+def _safe_bbox_size(layout) -> tuple[float, float] | None:
+    ext = _safe_bbox_extents(layout)
+    if ext is None:
+        return None
 
     width = float(ext.size.x)
     height = float(ext.size.y)
