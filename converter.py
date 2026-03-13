@@ -9,7 +9,6 @@ import gc
 import math
 import multiprocessing as mp
 import os
-from statistics import median
 import subprocess
 import tempfile
 import time
@@ -308,6 +307,13 @@ def _rect_diagonal(rect: tuple[float, float, float, float]) -> float:
     return math.hypot(size[0], size[1])
 
 
+def _rect_longest_side(rect: tuple[float, float, float, float]) -> float:
+    size = _rect_size(rect)
+    if size is None:
+        return 0.0
+    return max(size)
+
+
 def _safe_entity_rect(entity) -> tuple[float, float, float, float] | None:
     import ezdxf
     from ezdxf import bbox
@@ -329,57 +335,36 @@ def _collect_entity_rects(layout) -> list[tuple[str, tuple[float, float, float, 
     return rects
 
 
-def _cluster_gap_threshold(
-    entity_rects: list[tuple[str, tuple[float, float, float, float]]],
-    gap_scale: float,
-) -> float:
-    spans = []
-    for _, rect in entity_rects:
-        size = _rect_size(rect)
-        if size is None:
-            continue
-        span = max(size)
-        if span > 0:
-            spans.append(span)
-    if not spans:
-        return 1.0
-
-    # Use a generous threshold so nearby construction lines, dimensions and labels
-    # stay in one cluster, while far-away outliers remain isolated.
-    return max(1.0, median(spans) * gap_scale)
-
-
 def _cluster_entity_rects(
     entity_rects: list[tuple[str, tuple[float, float, float, float]]],
-    gap_threshold: float,
+    gap_scale: float,
 ) -> list[dict[str, object]]:
     clusters: list[dict[str, object]] = []
-    pending = list(range(len(entity_rects)))
-    seen: set[int] = set()
+    pending = set(range(len(entity_rects)))
 
     while pending:
-        seed = pending.pop()
-        if seed in seen:
-            continue
+        seed = max(pending, key=lambda idx: _rect_longest_side(entity_rects[idx][1]))
+        pending.remove(seed)
 
-        queue = [seed]
-        seen.add(seed)
+        seed_handle, seed_rect = entity_rects[seed]
         handles: list[str] = []
         rects: list[tuple[float, float, float, float]] = []
+        cluster_rect = seed_rect
+        handles.append(seed_handle)
+        rects.append(seed_rect)
 
-        while queue:
-            idx = queue.pop()
-            handle, rect = entity_rects[idx]
-            handles.append(handle)
-            rects.append(rect)
-
-            for other_idx in range(len(entity_rects)):
-                if other_idx in seen:
-                    continue
-                _, other_rect = entity_rects[other_idx]
-                if _rect_gap(rect, other_rect) <= gap_threshold:
-                    seen.add(other_idx)
-                    queue.append(other_idx)
+        changed = True
+        while changed:
+            changed = False
+            dynamic_gap = max(_rect_longest_side(cluster_rect), _rect_longest_side(seed_rect), 1.0) * gap_scale
+            for other_idx in list(pending):
+                handle, other_rect = entity_rects[other_idx]
+                if _rect_gap(cluster_rect, other_rect) <= dynamic_gap:
+                    pending.remove(other_idx)
+                    handles.append(handle)
+                    rects.append(other_rect)
+                    cluster_rect = _rect_union(rects) or cluster_rect
+                    changed = True
 
         bbox_rect = _rect_union(rects)
         if bbox_rect is None:
@@ -398,27 +383,25 @@ def _cluster_entity_rects(
     return clusters
 
 
-def _pick_focus_clusters(clusters: list[dict[str, object]]) -> list[dict[str, object]]:
+def _pick_focus_clusters(clusters: list[dict[str, object]], cluster_gap_scale: float) -> list[dict[str, object]]:
     if len(clusters) <= 1:
         return clusters
 
-    total_entities = sum(int(cluster["count"]) for cluster in clusters)
     best = clusters[0]
     best_count = int(best["count"])
     best_score = float(best["score"])
+    best_bbox = best["bbox"]
+    proximity_limit = max(_rect_longest_side(best_bbox), 1.0) * max(cluster_gap_scale, 1.0)
 
     kept = [best]
-    covered = best_count
 
     for cluster in clusters[1:]:
-        if covered / max(total_entities, 1) >= 0.9:
-            break
-
         cluster_count = int(cluster["count"])
         cluster_score = float(cluster["score"])
-        if cluster_count >= max(2, int(best_count * 0.1)) or cluster_score >= best_score * 0.05:
+        gap_to_best = _rect_gap(best_bbox, cluster["bbox"])
+        is_significant = cluster_count >= max(2, int(best_count * 0.15)) or cluster_score >= best_score * 0.1
+        if gap_to_best <= proximity_limit and is_significant:
             kept.append(cluster)
-            covered += cluster_count
 
     return kept
 
@@ -429,8 +412,8 @@ def _prepare_render_layout(doc, layout_name: str, cluster_gap_scale: float):
     if not entity_rects:
         return doc, source_layout, None
 
-    clusters = _cluster_entity_rects(entity_rects, _cluster_gap_threshold(entity_rects, cluster_gap_scale))
-    focus_clusters = _pick_focus_clusters(clusters)
+    clusters = _cluster_entity_rects(entity_rects, cluster_gap_scale)
+    focus_clusters = _pick_focus_clusters(clusters, cluster_gap_scale)
     focus_rect = _rect_union([cluster["bbox"] for cluster in focus_clusters if cluster.get("bbox") is not None])
     if focus_rect is None:
         return doc, source_layout, None
