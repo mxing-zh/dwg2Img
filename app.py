@@ -120,7 +120,7 @@ class App(tk.Tk):
             label_col=0,
             field_col=1,
             label="格式：",
-            widget=self._make_combobox(option_frame, self.format_var, ["png", "jpg"], width=8),
+            widget=self._make_combobox(option_frame, self.format_var, ["png", "jpg"], width=7),
         )
         self._option_field(
             option_frame,
@@ -128,7 +128,7 @@ class App(tk.Tk):
             label_col=3,
             field_col=4,
             label="颜色模式：",
-            widget=self._make_combobox(option_frame, self.color_mode_var, list(COLOR_MODE_LABELS.keys()), width=10),
+            widget=self._make_combobox(option_frame, self.color_mode_var, list(COLOR_MODE_LABELS.keys()), width=7),
         )
         self._option_field(
             option_frame,
@@ -144,7 +144,7 @@ class App(tk.Tk):
             label_col=9,
             field_col=10,
             label="布局模式：",
-            widget=self._make_combobox(option_frame, self.layout_mode_var, list(LAYOUT_MODE_LABELS.keys()), width=18),
+            widget=self._make_combobox(option_frame, self.layout_mode_var, list(LAYOUT_MODE_LABELS.keys()), width=28),
         )
 
         self._option_field(
@@ -161,7 +161,7 @@ class App(tk.Tk):
             label_col=3,
             field_col=4,
             label="渲染并发：",
-            widget=self._make_entry(option_frame, self.max_workers_var, width=12),
+            widget=self._make_entry(option_frame, self.max_workers_var, width=10),
         )
         padding_widget = ttk.Frame(option_frame)
         self._make_entry(padding_widget, self.view_padding_percent_var, width=10).grid(row=0, column=0, sticky="w")
@@ -180,7 +180,7 @@ class App(tk.Tk):
             label_col=9,
             field_col=10,
             label="指定布局名：",
-            widget=self._make_entry(option_frame, self.layout_name_var, width=20, justify="left"),
+            widget=self._make_entry(option_frame, self.layout_name_var, width=31),
         )
 
         for sep_col in (2, 5, 8):
@@ -244,7 +244,7 @@ class App(tk.Tk):
         return ttk.Entry(parent, textvariable=variable, width=width, justify=justify)
 
     def _make_combobox(self, parent, variable: tk.StringVar, values: list[str], width: int) -> ttk.Combobox:
-        return ttk.Combobox(parent, textvariable=variable, values=values, width=width, state="readonly")
+        return ttk.Combobox(parent, textvariable=variable, values=values, width=width, state="readonly", justify="center")
 
     def _note_label(self, parent, text: str | None = None, textvariable: tk.StringVar | None = None) -> tk.Label:
         return tk.Label(parent, text=text, textvariable=textvariable, fg=NOTE_COLOR, font=NOTE_FONT)
