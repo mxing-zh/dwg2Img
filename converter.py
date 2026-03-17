@@ -18,6 +18,16 @@ from typing import Iterable, List
 SUPPORTED_IMAGE_FORMATS = {"png", "jpg", "jpeg"}
 LAYOUT_MODELS = {"auto", "model", "layout"}
 COLOR_MODES = {"bw", "original"}
+CJK_FONT_CANDIDATES = (
+    "simhei.ttf",
+    "msyh.ttc",
+    "simsun.ttc",
+    "NotoSansSC-VF.ttf",
+    "NotoSerifSC-VF.ttf",
+)
+CJK_STYLE_KEYWORDS = ("黑体", "宋体", "仿宋", "楷体", "等线", "中文")
+CJK_BIGFONT_MARKERS = ("hztxt", "hz", "ht.shx", "fs.shx", "khz", "gbcbig")
+_CJK_FONT_CACHE: str | None | bool = False
 
 
 def _available_memory_gb() -> float | None:
@@ -267,6 +277,53 @@ def _layout_by_name(doc, layout_name: str):
         if layout.name == layout_name:
             return layout
     return doc.modelspace()
+
+
+def _detect_cjk_font_file() -> str | None:
+    global _CJK_FONT_CACHE
+    if _CJK_FONT_CACHE is not False:
+        return _CJK_FONT_CACHE or None
+
+    try:
+        from ezdxf.fonts import fonts
+    except Exception:
+        _CJK_FONT_CACHE = None
+        return None
+
+    for candidate in CJK_FONT_CANDIDATES:
+        try:
+            if fonts.font_manager.has_font(candidate):
+                _CJK_FONT_CACHE = candidate
+                return candidate
+        except Exception:
+            continue
+
+    _CJK_FONT_CACHE = None
+    return None
+
+
+def _needs_cjk_font_fallback(text_style) -> bool:
+    style_name = str(getattr(text_style.dxf, "name", "") or "").lower()
+    font_name = str(getattr(text_style.dxf, "font", "") or "").lower()
+    bigfont_name = str(getattr(text_style.dxf, "bigfont", "") or "").lower()
+
+    if any(keyword in style_name for keyword in CJK_STYLE_KEYWORDS):
+        return True
+    if any(marker in bigfont_name for marker in CJK_BIGFONT_MARKERS):
+        return True
+    if bigfont_name and font_name.endswith(".shx"):
+        return True
+    return False
+
+
+def _apply_cjk_font_fallbacks(doc) -> None:
+    cjk_font = _detect_cjk_font_file()
+    if not cjk_font:
+        return
+
+    for text_style in doc.styles:
+        if _needs_cjk_font_fallback(text_style):
+            text_style.dxf.font = cjk_font
 
 
 def _bbox_to_rect(ext) -> tuple[float, float, float, float] | None:
@@ -526,6 +583,7 @@ def _render_dxf_to_image(
     doc = ezdxf.readfile(dxf_file)
     target_layout, layout_name = _pick_layout(doc, layout_mode, preferred_layout)
     render_doc, render_layout, focus_rect = _prepare_render_layout(doc, layout_name, cluster_gap_scale)
+    _apply_cjk_font_fallbacks(render_doc)
 
     fig_w, fig_h = _figure_size_inches(render_layout, focus_rect)
     fig = plt.figure(figsize=(fig_w, fig_h), dpi=dpi)
